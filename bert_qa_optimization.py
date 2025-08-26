@@ -52,18 +52,20 @@ class OptimizedBertQA:
             # 注意力机制权重
             attention = layer.attention.self
 
-            # QKV 权重合并
-            q_weight = attention.query.weight.data
-            k_weight = attention.key.weight.data
-            v_weight = attention.value.weight.data
-            qkv_weight = torch.stack([q_weight, k_weight, v_weight], dim=0)
+            # QKV 权重合并 - 按照 bert_binding 期望的格式
+            q_weight = attention.query.weight.data  # [768, 768]
+            k_weight = attention.key.weight.data  # [768, 768]
+            v_weight = attention.value.weight.data  # [768, 768]
+
+            # 将 QKV 权重连接成 [768, 2304] 的形状
+            qkv_weight = torch.cat([q_weight, k_weight, v_weight], dim=1)
 
             # 注意力输出权重
             attn_output_weight = layer.attention.output.dense.weight.data
 
             # Feed Forward 权重
-            ff_fc1_weight = layer.intermediate.dense.weight.data.t()  # 转置以匹配期望格式
-            ff_fc2_weight = layer.output.dense.weight.data.t()
+            ff_fc1_weight = layer.intermediate.dense.weight.data.t()  # [768, 3072]
+            ff_fc2_weight = layer.output.dense.weight.data.t()  # [3072, 768]
 
             self.bert_weights[f'layer_{i}'] = {
                 'qkv_weight': qkv_weight.to(torch.float16).to(self.device),
@@ -73,8 +75,8 @@ class OptimizedBertQA:
             }
 
         # 提取问答头权重
-        self.qa_outputs_weight = self.original_model.qa_outputs.weight.data
-        self.qa_outputs_bias = self.original_model.qa_outputs.bias.data
+        self.qa_outputs_weight = self.original_model.qa_outputs.weight.data.to(torch.float16).to(self.device)
+        self.qa_outputs_bias = self.original_model.qa_outputs.bias.data.to(torch.float16).to(self.device)
 
         print("Weight extraction completed!")
 
@@ -94,14 +96,17 @@ class OptimizedBertQA:
         if input_embeddings.device != torch.device(self.device):
             input_embeddings = input_embeddings.to(self.device)
 
-        hidden_states = input_embeddings
+        # 调整输入形状以匹配 bert_binding 期望的格式
+        # 从 [batch_size, seq_length, hidden_size] 调整为 [batch_size * seq_length, hidden_size]
+        batch_size, seq_length, hidden_size = input_embeddings.shape
+        hidden_states = input_embeddings.view(batch_size * seq_length, hidden_size)
 
         # 逐层进行优化推理
         for i in range(self.num_layers):
             layer_weights = self.bert_weights[f'layer_{i}']
 
             # 使用 bert_binding 进行单层优化推理
-            hidden_states = bert_binding.souffle_bert_layer(
+            layer_output = bert_binding.souffle_bert_layer(
                 hidden_states,
                 layer_weights['qkv_weight'],
                 layer_weights['attn_fc_weight'],
@@ -109,6 +114,15 @@ class OptimizedBertQA:
                 layer_weights['ff_fc2_weight'],
                 self.opt_level
             )
+
+            # 检查返回值类型
+            if isinstance(layer_output, list):
+                hidden_states = layer_output[0]  # 取第一个输出
+            else:
+                hidden_states = layer_output
+
+        # 恢复原始形状 [batch_size, seq_length, hidden_size]
+        hidden_states = hidden_states.view(batch_size, seq_length, hidden_size)
 
         return hidden_states
 
@@ -217,6 +231,26 @@ class OptimizedBertQA:
             for i in range(num_runs):
                 start_time = time.time()
                 original_outputs = self.original_model(**inputs)
+
+                # 模型输出包含答案开始和结束位置的预测
+                answer_start_scores = original_outputs.start_logits
+                answer_end_scores = original_outputs.end_logits
+
+                # 找到分数最高的起始和结束位置
+                answer_start_index = torch.argmax(answer_start_scores)
+                answer_end_index = torch.argmax(answer_end_scores)
+
+                print(answer_start_index, answer_end_index)
+
+                # 获取所有标记（token）
+                all_tokens = self.tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
+
+                # 从标记中提取答案
+                answer = self.tokenizer.convert_tokens_to_string(all_tokens[answer_start_index:answer_end_index + 1])
+
+                print(f"问题: {question}")
+                print(f"答案: {answer}")
+
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
                 end_time = time.time()
