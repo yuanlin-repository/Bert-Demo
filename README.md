@@ -1,7 +1,7 @@
 # Bert-Demo
 
 ## Reproduce steps
-1. ssh yuanlin@34.44.107.72
+1. ssh yuanlin@{ip}
 2. docker exec -it ca023b78bfb0 /bin/bash
 3. cd /workspace/souffle-models/python/models/bert
 4. python bert_qa_optimization.py
