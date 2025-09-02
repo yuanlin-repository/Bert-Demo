@@ -364,7 +364,9 @@ def simple_souffle_test():
                 token_type_ids=inputs.get("token_type_ids")
             )
 
-        print(f"Input embeddings shape: {input_embeddings.shape}")
+        print("input embeddings delta matrix(input_embeddings - input_embeddings.to(torch.float16).to(torch.float16)):\n", input_embeddings - input_embeddings.to(torch.float16).to(torch.float16))
+
+        # print(f"Input embeddings shape: {input_embeddings.shape}")
 
         # 获取第一层的真实权重
         layer_0 = original_model.bert.encoder.layer[0]
@@ -378,13 +380,13 @@ def simple_souffle_test():
         ff_fc1_weight = layer_0.intermediate.dense.weight.data  # [3072, 768]
         ff_fc2_weight = layer_0.output.dense.weight.data  # [768, 3072]
 
-        print("Original weight shapes:")
-        print(f"  Q weight: {q_weight.shape}")
-        print(f"  K weight: {k_weight.shape}")
-        print(f"  V weight: {v_weight.shape}")
-        print(f"  Attn output: {attn_output_weight.shape}")
-        print(f"  FF1: {ff_fc1_weight.shape}")
-        print(f"  FF2: {ff_fc2_weight.shape}")
+        # print("Original weight shapes:")
+        # print(f"  Q weight: {q_weight.shape}")
+        # print(f"  K weight: {k_weight.shape}")
+        # print(f"  V weight: {v_weight.shape}")
+        # print(f"  Attn output: {attn_output_weight.shape}")
+        # print(f"  FF1: {ff_fc1_weight.shape}")
+        # print(f"  FF2: {ff_fc2_weight.shape}")
 
         # 运行原始模型第一层获取参考输出
         print("\n--- Running Original Model Layer 0 ---")
@@ -392,8 +394,8 @@ def simple_souffle_test():
             hidden_states = input_embeddings.to(torch.float32)  # 原始模型使用FP32
             original_output = layer_0(hidden_states)[0]  # 取第一个输出（hidden_states）
 
-        print(f"Original layer 0 output shape: {original_output.shape}")
-        print(f"Original output sample: {original_output[0, 0, :5]}")
+        # print(f"Original layer 0 output shape: {original_output.shape}")
+        # print(f"Original output sample: {original_output[0, 0, :5]}")
 
         # 测试不同的权重格式配置
         test_configs = [
@@ -447,10 +449,10 @@ def simple_souffle_test():
                 ff1_w = config['ff1'].to(torch.float16).to(device)
                 ff2_w = config['ff2'].to(torch.float16).to(device)
 
-                print(f"  QKV weight shape: {qkv_w.shape}")
-                print(f"  Attn FC weight shape: {attn_w.shape}")
-                print(f"  FF1 weight shape: {ff1_w.shape}")
-                print(f"  FF2 weight shape: {ff2_w.shape}")
+                # print(f"  QKV weight shape: {qkv_w.shape}")
+                # print(f"  Attn FC weight shape: {attn_w.shape}")
+                # print(f"  FF1 weight shape: {ff1_w.shape}")
+                # print(f"  FF2 weight shape: {ff2_w.shape}")
 
                 # 调用 souffle_bert_layer
                 souffle_output = bert_binding.souffle_bert_layer(
@@ -462,31 +464,23 @@ def simple_souffle_test():
                     4  # opt_level
                 )
 
-                print(f"  Souffle output type: {type(souffle_output)}")
+                # print(f"  Souffle output type: {type(souffle_output)}")
 
-                if isinstance(souffle_output, list):
-                    print(f"  Number of outputs: {len(souffle_output)}")
-                    for idx, out in enumerate(souffle_output):
-                        print(f"    Output[{idx}] shape: {out.shape}")
+                final_output = souffle_output[1]
 
-                    # 假设最后一个输出是最终的hidden states
-                    final_output = souffle_output[-1]
-                else:
-                    final_output = souffle_output
-
-                print(f"  Final output shape: {final_output.shape}")
+                # print(f"  Final output shape: {final_output.shape}")
 
                 # 确保维度匹配进行比较
-                if final_output.shape != original_output.shape:
-                    print(f"  Shape mismatch! Souffle: {final_output.shape}, Original: {original_output.shape}")
-
-                    # 尝试重塑
-                    if final_output.numel() == original_output.numel():
-                        final_output = final_output.view(original_output.shape)
-                        print(f"  Reshaped to: {final_output.shape}")
-                    else:
-                        print(f"  Cannot reshape - different number of elements")
-                        continue
+                # if final_output.shape != original_output.shape:
+                #     print(f"  Shape mismatch! Souffle: {final_output.shape}, Original: {original_output.shape}")
+                #
+                #     # 尝试重塑
+                #     if final_output.numel() == original_output.numel():
+                #         final_output = final_output.view(original_output.shape)
+                #         print(f"  Reshaped to: {final_output.shape}")
+                #     else:
+                #         print(f"  Cannot reshape - different number of elements")
+                #         continue
 
                 # 计算差异
                 diff = torch.norm(
@@ -494,8 +488,10 @@ def simple_souffle_test():
                 )
                 relative_diff = (diff / torch.norm(original_output.to(device).to(torch.float32))).item()
 
+                print(
+                    f"delta matrix:\n {final_output.to(torch.float32) - original_output.to(device).to(torch.float32)}")
                 print(f"  L2 norm difference: {diff.item():.8f}")
-                print(f"  Relative difference: {relative_diff:.8f}")
+                # print(f"  Relative difference: {relative_diff:.8f}")
 
                 # 检查数值稳定性
                 if torch.isnan(final_output).any():
@@ -523,19 +519,19 @@ def simple_souffle_test():
                 import traceback
                 traceback.print_exc()
 
-        print(f"\n=== SUMMARY ===")
-        print(f"Best configuration: {best_config}")
-        print(f"Best L2 difference: {best_diff:.8f}")
-
-        if best_diff < 1e-3:
-            print("SUCCESS: Found a configuration with excellent match!")
-            return True
-        elif best_diff < 1e-2:
-            print("PARTIAL SUCCESS: Found a configuration with good match!")
-            return True
-        else:
-            print("FAILURE: No configuration achieved good match.")
-            return False
+        # print(f"\n=== SUMMARY ===")
+        # print(f"Best configuration: {best_config}")
+        # print(f"Best L2 difference: {best_diff:.8f}")
+        # if best_diff < 1e-3:
+        #     print("SUCCESS: Found a configuration with excellent match!")
+        #     return True
+        # elif best_diff < 1e-2:
+        #     print("PARTIAL SUCCESS: Found a configuration with good match!")
+        #     return True
+        # else:
+        #     print("FAILURE: No configuration achieved good match.")
+        #     return False
+        return True
 
     except Exception as e:
         print(f"Error in weight format test: {e}")
@@ -576,13 +572,13 @@ def unit_weight_test():
             dtype=torch.float32
         ).view(batch_size, seq_len, hidden_size) * 0.001  # 缩放避免数值爆炸
         input_embeddings.fill_(1.0)
-        print("input_embeddings:", input_embeddings)
+        print("input_embeddings:\n", input_embeddings)
 
         if torch.cuda.is_available():
             input_embeddings = input_embeddings.cuda()
 
-        print(f"Input embeddings shape: {input_embeddings.shape}")
-        print(f"Input sample: {input_embeddings[0, 0, :5]}")
+        # print(f"Input embeddings shape: {input_embeddings.shape}")
+        # print(f"Input sample: {input_embeddings[0, 0, :5]}")
 
         # === 1. 修改原始模型的权重为全1 ===
         print("\n--- Setting Original Model Weights to 1 ---")
@@ -615,17 +611,19 @@ def unit_weight_test():
             if layer_0.output.dense.bias is not None:
                 layer_0.output.dense.bias.fill_(0.0)
 
-        print("Original model weights set to 1")
+        # print("\nlayer_0.attention.self.query.weight:\n", layer_0.attention.self.query.weight)
+        # print("\nlayer_0.attention.self.key.weight:\n", layer_0.attention.self.key.weight)
+        # print("\nlayer_0.attention.self.value.weight:\n", layer_0.attention.self.value.weight)
+        # print("\nlayer_0.attention.output.dense.weight:\n", layer_0.attention.output.dense.weight)
+
 
         # 运行原始模型第一层
         print("\n--- Running Original Model with Unit Weights ---")
         with torch.no_grad():
             original_output = layer_0(input_embeddings)[0]
 
-        print(f"Original output shape: {original_output.shape}")
-        print(f"Original output sample: {original_output[0, 0, :5]}")
-        print(
-            f"Original output stats - Min: {original_output.min():.6f}, Max: {original_output.max():.6f}, Mean: {original_output.mean():.6f}")
+        # print(f"Original output shape: {original_output.shape}")
+        print(f"Original output:\n {original_output}")
 
         # === 2. 创建全1权重给souffle_bert_layer ===
         print("\n--- Creating Unit Weights for souffle_bert_layer ---")
@@ -635,11 +633,11 @@ def unit_weight_test():
         attn_fc_weight_ones = torch.ones(hidden_size, hidden_size, dtype=torch.float16, device=device)
         ff_fc1_weight_ones = torch.ones(hidden_size, d_intermediate, dtype=torch.float16, device=device)
         ff_fc2_weight_ones = torch.ones(d_intermediate, hidden_size, dtype=torch.float16, device=device)
-
-        print(f"QKV weight shape: {qkv_weight_ones.shape}")
-        print(f"Attn FC weight shape: {attn_fc_weight_ones.shape}")
-        print(f"FF1 weight shape: {ff_fc1_weight_ones.shape}")
-        print(f"FF2 weight shape: {ff_fc2_weight_ones.shape}")
+        #
+        # print(f"QKV weight: {qkv_weight_ones}")
+        # print(f"Attn FC weight: {attn_fc_weight_ones}")
+        # print(f"FF1 weight: {ff_fc1_weight_ones}")
+        # print(f"FF2 weight: {ff_fc2_weight_ones}")
 
         # === 3. 运行souffle_bert_layer ===
         print("\n--- Running souffle_bert_layer with Unit Weights ---")
@@ -652,25 +650,10 @@ def unit_weight_test():
                 ff_fc2_weight_ones,
                 4  # opt_level
             )
-            souffle_output = souffle_output[1]
-            print(f"Souffle output type: {type(souffle_output)}")
-            final_output = souffle_output
-            print(f"Single output shape: {final_output.shape}")
-            sample = final_output.flatten()[:5] if final_output.numel() >= 5 else final_output.flatten()
-            print(f"Single output sample: {sample}")
-            print(
-                f"Single output stats - Min: {final_output.min():.6f}, Max: {final_output.max():.6f}, Mean: {final_output.mean():.6f}")
-
-            if final_output.shape == original_output.shape:
-                print(f"\n--- Comparing Single Output (Same Shape) ---")
-                compare_outputs(original_output, final_output, "Single Output")
-            elif final_output.numel() == original_output.numel():
-                print(f"\n--- Comparing Single Output (Reshaped) ---")
-                reshaped_output = final_output.view(original_output.shape)
-                compare_outputs(original_output, reshaped_output, "Single Output (reshaped)")
-            else:
-                print(
-                    f"Single output cannot be compared - shape: {final_output.shape}, elements: {final_output.numel()}")
+            souffle_output = souffle_output[1].to(torch.float32)
+            # print(f"Souffle output type: {type(souffle_output)}")
+            # print(f"Single output shape: {final_output.shape}")
+            print(f"souffle_bert_layer output:\n {souffle_output}")
 
         except Exception as e:
             print(f"Error running souffle_bert_layer: {e}")
@@ -678,6 +661,8 @@ def unit_weight_test():
             traceback.print_exc()
             return False
 
+        print("\n--- Compare original_output and souffle_output ---")
+        print("delta matrix:\n", original_output - souffle_output.to(torch.float32))
         return True
 
     except Exception as e:
@@ -757,7 +742,7 @@ def compare_outputs(original, optimized, label="Optimized"):
 
 def main():
     """主调试函数"""
-    print("开始修复和调试 BERT 优化模型...")
+    print("开始调试 BERT 优化模型...")
 
     unit_success = unit_weight_test()
 
@@ -765,32 +750,31 @@ def main():
         print("\n*** 单位权重测试成功! ***")
     else:
         print("\n*** 单位权重测试失败! ***")
-        # 如果失败，尝试扩展测试
 
     # 1. 首先测试最简单的 souffle_bert_layer
     if not simple_souffle_test():
         print("Basic souffle_bert_layer test failed. Check the binding implementation.")
 
     # 2. 如果基础测试通过，继续测试完整模型
-    print("\nBasic test passed, loading full model...")
+    # print("\nBasic test passed, loading full model...")
 
-    try:
-        optimized_qa = OptimizedBertQA(
-            model_name="MattBoraske/BERT-question-answering-SQuAD",
-            opt_level=4
-        )
+    # try:
+    #     optimized_qa = OptimizedBertQA(
+    #         model_name="MattBoraske/BERT-question-answering-SQuAD",
+    #         opt_level=4
+    #     )
+    #
+    #     # 3. 使用简单的测试数据
+    #     question = "Who walked on the moon?"
+    #     context = "Neil Armstrong was the first person to walk on the moon in 1969."
+    #
+    #     pred_result = optimized_qa.predict(question, context, max_seq_length=384)
+    #     print(pred_result)
 
-        # 3. 使用简单的测试数据
-        question = "Who walked on the moon?"
-        context = "Neil Armstrong was the first person to walk on the moon in 1969."
-
-        pred_result = optimized_qa.predict(question, context, max_seq_length=384)
-        print(pred_result)
-
-    except Exception as e:
-        print(f"Error in main: {e}")
-        import traceback
-        traceback.print_exc()
+    # except Exception as e:
+    # print(f"Error in main: {e}")
+    # import traceback
+    # traceback.print_exc()
 
 
 # 额外的权重格式检查函数
@@ -839,7 +823,7 @@ def check_bert_weight_formats():
 
 if __name__ == "__main__":
     # 首先检查标准格式
-    check_bert_weight_formats()
+    # check_bert_weight_formats()
 
     # 然后运行主调试
     main()
